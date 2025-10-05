@@ -1,0 +1,126 @@
+import requests  
+import pandas as pd  
+import numpy as np  
+import json  
+import logging  
+from concurrent.futures import ThreadPoolExecutor, as_completed  
+from datetime import datetime, timedelta  
+import random  
+import os  
+  
+# ---------------- Logging Setup ----------------  
+logging.basicConfig(  
+    filename='stock_analyzer.log',  
+    level=logging.DEBUG,  
+    format='%(asctime)s - %(levelname)s - %(message)s'  
+)  
+  
+# ---------------- Configuration Loader ----------------  
+class Config:  
+    def __init__(self, config_file="config.json"):  
+        if not os.path.exists(config_file):  
+            raise FileNotFoundError("Config file not found.")  
+        with open(config_file, "r") as f:  
+            self.config = json.load(f)  
+  
+    def get(self, key, default=None):  
+        return self.config.get(key, default)  
+  
+# ---------------- Stock Data Fetcher ----------------  
+class StockFetcher:  
+    def __init__(self, api_url, api_key=None):  
+        self.api_url = api_url  
+        self.api_key = api_key  
+  
+    def fetch_stock_data(self, symbol):  
+        """  
+        Simulate API call (replace with real one if you have a stock API)  
+        """  
+        logging.info(f"Fetching data for {symbol}")  
+        try:  
+            # Simulated data: 30 days of prices  
+            dates = [datetime.now() - timedelta(days=i) for i in range(30)]  
+            prices = [round(random.uniform(100, 300), 2) for _ in range(30)]  
+  
+            df = pd.DataFrame({  
+                "date": dates,  
+                "price": prices  
+            })  
+            df.sort_values("date", inplace=True)  
+            return df  
+        except Exception as e:  
+            logging.error(f"Error fetching data for {symbol}: {e}")  
+            return pd.DataFrame()  
+  
+# ---------------- Stock Analyzer ----------------  
+class StockAnalyzer:  
+    def __init__(self, window_short=5, window_long=20):  
+        self.window_short = window_short  
+        self.window_long = window_long  
+  
+    def analyze(self, df):  
+        """  
+        Add moving averages and volatility to the DataFrame  
+        """  
+        if df.empty:  
+            return df  
+  
+        df['MA_short'] = df['price'].rolling(window=self.window_short).mean()  
+        df['MA_long'] = df['price'].rolling(window=self.window_long).mean()  
+        df['Volatility'] = df['price'].rolling(window=self.window_short).std()  
+  
+        # Signal: Buy when short MA crosses above long MA, Sell otherwise  
+        df['Signal'] = np.where(df['MA_short'] > df['MA_long'], 'BUY', 'SELL')  
+        return df  
+  
+# ---------------- Main Controller ----------------  
+class StockController:  
+    def __init__(self, config):  
+        self.config = config  
+        self.fetcher = StockFetcher(  
+            api_url=self.config.get("api_url"),  
+            api_key=self.config.get("api_key")  
+        )  
+        self.analyzer = StockAnalyzer(  
+            window_short=self.config.get("window_short", 5),  
+            window_long=self.config.get("window_long", 20)  
+        )  
+  
+    def run(self):  
+        symbols = self.config.get("symbols", [])  
+        results = []  
+  
+        # Use ThreadPoolExecutor for concurrent fetching  
+        with ThreadPoolExecutor(max_workers=self.config.get("max_threads", 4)) as executor:  
+            future_to_symbol = {  
+                executor.submit(self.process_symbol, symbol): symbol  
+                for symbol in symbols  
+            }  
+            for future in as_completed(future_to_symbol):  
+                symbol = future_to_symbol[future]  
+                try:  
+                    df = future.result()  
+                    results.append((symbol, df))  
+                except Exception as e:  
+                    logging.error(f"Error processing {symbol}: {e}")  
+  
+        # Save results  
+        for symbol, df in results:  
+            filename = f"{symbol}_analysis.csv"  
+            df.to_csv(filename, index=False)  
+            logging.info(f"Saved analysis for {symbol} to {filename}")  
+  
+    def process_symbol(self, symbol):  
+        df = self.fetcher.fetch_stock_data(symbol)  
+        analyzed_df = self.analyzer.analyze(df)  
+        return analyzed_df  
+  
+# ---------------- Entry Point ----------------  
+if __name__ == "__main__":  
+    try:  
+        config = Config("config.json")  
+        controller = StockController(config)  
+        controller.run()  
+    except Exception as e:  
+        logging.critical(f"Fatal error: {e}")  
+        print("An error occurred. Check logs for details.")  
